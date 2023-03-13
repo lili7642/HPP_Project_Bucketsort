@@ -2,7 +2,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-
+#include <time.h>
+#ifdef _OPENMP
+    #include <omp.h>
+#endif
 // Prints out the list to the N:th element.
 void print_list(int* list, int N){
     for (int i = 0; i < N; i++)
@@ -13,6 +16,8 @@ void print_list(int* list, int N){
 }
 
 void fill_list(int *list, int N, char *dist){
+    srand(time(NULL));
+
     // uniform dist
     if(!(strcmp(dist, "uniform"))){
         printf("Uniform distribution\n");
@@ -22,8 +27,53 @@ void fill_list(int *list, int N, char *dist){
     }
 
     // normal dist
+    else if(!(strcmp(dist, "normal"))){
+        printf("Normal distribution\n");
+
+        // some sort of box muller transform
+
+        int mean = N/2;
+        int std = N/12;
+
+        double u, v, z;
+
+        for (int i = 0; i < N; i++){
+            u = (double)rand()/RAND_MAX; // two values between 0 and 1
+            v = (double)rand()/RAND_MAX;
+
+            z = sqrt(-2*log(u))*cos(2*3.1415*v);
+            list[i] = z*std + mean;
+        }
+    }
 
     // exponential dist
+}
+
+void insertionsort( int *list, int N){
+    int i, j, val;
+    for (i = 1; i < N; i++){
+        val = list[i];
+        j = i-1;
+        while( j >= 0 && list[j] > val){
+            list[j+1] = list[j];
+            j--;
+        }
+        list[j+1] = val;
+    }
+    
+}
+
+// check if a list is sorted in ascending order
+int is_sorted(int *list, int size){
+    int flag = 1, i = 0;
+    while(flag == 1 && i+1 < size){
+        if(list[i]>list[i+1]) flag = 0;
+        i++;
+    }
+    if(!flag){
+        printf("\n\n UNSORTED ELEMENTS IN INDEX %d and %d:\n%d and %d.\n", i, i+1, list[i], list[i+1]);
+    }
+    return flag;
 }
 
 
@@ -38,6 +88,11 @@ int main(int argc, char *argv[]){
     int N_buckets = atoi(argv[2]);
     int N_threads = atoi(argv[3]);
     char *dist_type = argv[4];
+
+    #ifdef _OPENMP
+        printf("openmp found\n");
+        omp_set_num_threads(N_threads);
+    #endif
 
     // CREATE LIST
     int *list = malloc(N_list * sizeof(*list)); // malloc does not have to be typecasted?
@@ -66,13 +121,67 @@ int main(int argc, char *argv[]){
     int min_element = list[0];
     for(int i = 1; i < N_list; i++){
         if(list[i] > max_element) max_element = list[i];
+        else if(list[i] < min_element) min_element = list[i];
     }
+
+    printf("Biggest element: %d, smallest element: %d\n", max_element, min_element);
 
     // calculate factor
 
+    int range = (max_element - min_element);
+    double temp = (double)N_buckets/(range+1);
+
+    printf("Factor: %lf\n", temp);
+    for (int i = 0; i < N_list; i++){
+        int bucket_index = (int)((list[i]-min_element)*temp);
+        buckets[bucket_index][bucket_count[bucket_index]] = list[i];
+        bucket_count[bucket_index]++;
+    }
+
+    /*
+    for (int i = 0; i < N_buckets; i++){
+        printf("BUCKET #%d: ", i);
+        print_list(buckets[i], bucket_count[i]);
+    }*/
+    
+    for (int i = 0; i < N_buckets; i++)
+    {
+        printf("BUCKET #%d, Nr of elements: %d\n", i, bucket_count[i]);
+    }
+    
+    
+
     // SORT BUCKETS LOCALLY
+    printf("SORTING: \n");
+
+#pragma omp parallel for
+    for (int i = 0; i < N_buckets; i++){
+        insertionsort(buckets[i], bucket_count[i]);
+    }
+
 
     // PUT ELEMENTS FROM BUCKET BACK INTO LIST IN ORDER
+    // this is parallelizable but need to remove list_index
+    int list_index = 0;
+    for (int i = 0; i < N_buckets; i++){
+        for (int j = 0; j < bucket_count[i]; j++){
+            list[list_index] = buckets[i][j];
+            list_index++;
+        }
+        
+    }
+    printf("SORTED LIST:\n");
+        //print_list(list, N_list);
+
+    // CHECK IF SORTED
+    int flag = is_sorted(list, N_list);
+    if(flag){
+        printf("The list is sorted!\n");
+    }else{
+        printf("The list is not sorted...\n");
+    }
+    
+    
 
     // FREE EVERYTHING
     free(list);
