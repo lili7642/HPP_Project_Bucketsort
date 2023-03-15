@@ -6,6 +6,14 @@
 #ifdef _OPENMP
     #include <omp.h>
 #endif
+
+// swap the values of two pointers
+void swap(int* a, int* b){
+    int temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
 // Prints out the list to the N:th element.
 void print_list(int* list, int N){
     for (int i = 0; i < N; i++)
@@ -16,7 +24,7 @@ void print_list(int* list, int N){
 }
 
 void fill_list(int *list, int N, char *dist){
-    srand(time(NULL));
+    srand(time(NULL)); // set unique seed
 
     // uniform dist
     if(!(strcmp(dist, "uniform"))){
@@ -47,8 +55,21 @@ void fill_list(int *list, int N, char *dist){
     }
 
     // exponential dist
+    else if(!(strcmp(dist, "exponential"))){
+        printf("Exponential distribution\n");
+        double lambda = 0.002;
+        double u;
+        for (int i = 0; i < N; i++){
+            u = (double)rand()/RAND_MAX;
+            list[i] = -log(1-u)/lambda;
+        }
+        
+
+    }
 }
 
+// SORTING METHODS --------------------------------------------------------------------------------------------
+// insertion sort from wikipedia
 void insertionsort( int *list, int N){
     int i, j, val;
     for (i = 1; i < N; i++){
@@ -62,6 +83,44 @@ void insertionsort( int *list, int N){
     }
     
 }
+
+// quicksort stuff
+
+// algorithm to chose a pivot index for quicksorting
+int pivot(int *list, int lower, int upper){
+    return(upper); 
+}
+
+// swap all elements in a list over a pivot element
+int partition(int *list, int lower, int upper){
+    int piv_index = pivot(list, lower, upper);
+    int piv = list[piv_index];
+
+    swap(&list[upper], &list[piv_index]);
+
+    int i = lower - 1;
+    for (int j = lower; j < upper; j++){
+        if (list[j] < piv){
+            i++;
+            swap(&list[i], &list[j]);
+        }
+    }
+
+    swap(&list[i + 1], &list[upper]); // swap the pivot element to its correct position
+    return(i + 1); // all elements smaller than the pivot element will be to the left of i+1
+}
+
+// QUICK SORT
+void quicksort(int* list, int lower, int upper){
+    // only sort if list is longer than one element
+    if(lower < upper){
+        int piv_index = partition(list, lower, upper); // find pivot element
+        quicksort(list, lower, piv_index - 1);
+        quicksort(list, piv_index + 1, upper);
+    }
+}
+
+// --------------------------------------------------------------------------------------------------------------
 
 // check if a list is sorted in ascending order
 int is_sorted(int *list, int size){
@@ -77,7 +136,6 @@ int is_sorted(int *list, int size){
 }
 
 void print_to_file(char *filename, int *list, int N){
-
     FILE *fp;
     fp = fopen(filename, "w");
 
@@ -88,11 +146,37 @@ void print_to_file(char *filename, int *list, int N){
     fclose(fp);
 }
 
+void dist_into_buckets(int *list, int N_list, int N_buckets, int **buckets, int* bucket_count){
+    // find max and min:
+    int max_element = list[0];
+    int min_element = list[0];
+    for(int i = 1; i < N_list; i++){
+        if(list[i] > max_element) max_element = list[i];
+        else if(list[i] < min_element) min_element = list[i];
+    }
+    //printf("Biggest element: %d, smallest element: %d\n", max_element, min_element);
+
+    // calculate factor
+
+    int range = (max_element - min_element);
+    double temp = (double)N_buckets/(range+1);
+    //printf("Factor: %lf\n", temp);
+
+    for (int i = 0; i < N_list; i++){
+        int bucket_index = (int)((list[i]-min_element)*temp);
+        buckets[bucket_index][bucket_count[bucket_index]] = list[i];
+        bucket_count[bucket_index]++;
+    }
+}
 
 
 int main(int argc, char *argv[]){
     if(argc != 5){
         printf("Error: Excpected 4 arguments...\nUsage: %s N_list N_buckets N_threads Dist_type\n", argv[0]);
+        return -1;
+    }
+    if(strcmp(argv[4],"uniform") && strcmp(argv[4],"normal") && strcmp(argv[4],"exponential")){
+        printf("Error: allowed distribution are 'uniform', 'normal', 'exponential'");
         return -1;
     }
 
@@ -101,12 +185,12 @@ int main(int argc, char *argv[]){
     int N_threads = atoi(argv[3]);
     char *dist_type = argv[4];
 
-    #ifdef _OPENMP
+    if(N_threads > 1){
         printf("openmp found, running parallel\n");
         omp_set_num_threads(N_threads);
-    #else
+    }else{
         printf("openmp not found, running serial\n");
-    #endif
+    }
 
     // CREATE LIST --------------------------------------------------------------------------------------------------
     int *list = malloc(N_list * sizeof(*list)); // malloc does not have to be typecasted?
@@ -143,61 +227,49 @@ int main(int argc, char *argv[]){
     }
 
     createtime = omp_get_wtime();
-    printf("\nTIME TAKEN FOR CREATING BUCKETS: %lf seconds.\n\n", createtime - starttime);
+    
 
     // SORT ELEMENTS INTO BUCKETS ---------------------------------------------------------------------------------
 
-    // find max and min:
-    int max_element = list[0];
-    int min_element = list[0];
-    for(int i = 1; i < N_list; i++){
-        if(list[i] > max_element) max_element = list[i];
-        else if(list[i] < min_element) min_element = list[i];
-    }
-    //printf("Biggest element: %d, smallest element: %d\n", max_element, min_element);
-
-    // calculate factor
-
-    int range = (max_element - min_element);
-    double temp = (double)N_buckets/(range+1);
-    //printf("Factor: %lf\n", temp);
-
-    for (int i = 0; i < N_list; i++){
-        int bucket_index = (int)((list[i]-min_element)*temp);
-        buckets[bucket_index][bucket_count[bucket_index]] = list[i];
-        bucket_count[bucket_index]++;
-
-        
-    }
+    dist_into_buckets(list, N_list, N_buckets, buckets, bucket_count);
 
     disttime = omp_get_wtime();
-    printf("\nTIME TAKEN FOR BUCKET DISTRIBUTION: %lf seconds.\n\n", disttime - createtime);
-
-    /*
-    // print out buckets to check work load balance
-
-    for (int i = 0; i < N_buckets; i++){
-        printf("BUCKET #%d: ", i);
-        print_list(buckets[i], bucket_count[i]);
-    }
     
+
+    
+    // print out buckets to check work load balance
+    /*
     for (int i = 0; i < N_buckets; i++)
     {
         printf("BUCKET #%d, Nr of elements: %d\n", i, bucket_count[i]);
-    }*/
-    
+    }
+    */
     
 
     // SORT BUCKETS LOCALLY --------------------------------------------------------------------------------
-    //printf("SORTING: \n");
+
+    // some factor to decide wether to quicksort or insertion sort
+    //int factor = (int)(N_list/N_buckets);
+    int factor = N_list; // seems like a good value
+    int quicksorted = 10;
 
 #pragma omp parallel for
     for (int i = 0; i < N_buckets; i++){
-        insertionsort(buckets[i], bucket_count[i]);
+
+        // choose local sorting method depending on bucket size
+        if(bucket_count[i] >= factor){
+            quicksorted++;
+            quicksort(buckets[i], 0, bucket_count[i]-1);
+        }
+        else{
+            insertionsort(buckets[i], bucket_count[i]);
+        }
     }
+    printf("Used quicksort for %d buckets\n", quicksorted);
 
     sorttime = omp_get_wtime();
-    printf("\nTIME TAKEN FOR SORTING BUCKETS: %lf seconds.\n\n", sorttime - disttime);
+    
+    
 
 
     // PUT ELEMENTS FROM BUCKET BACK INTO LIST IN ORDER --------------------------------------------------
@@ -213,12 +285,14 @@ int main(int argc, char *argv[]){
     }
 
     putbacktime = omp_get_wtime();
-    printf("\nTIME TAKEN FOR PUTTING BACK INTO LIST: %lf seconds.\n\n", putbacktime - sorttime);
+    
 
     //end of sorting time
 
     endtime = omp_get_wtime();
-    printf("\nTIME TAKEN IN TOTAL: %lf seconds.\n\n", endtime - starttime);
+
+
+    printf("TIME: Total: %lf s, Bucket creation: %lf s, Bucket Dist: %lf s, Local sorting: %lf s, Put back: %lf s \n", endtime - starttime, createtime - starttime, disttime - createtime, sorttime - disttime, putbacktime - sorttime);
 
 
     //printf("SORTED LIST:\n");
