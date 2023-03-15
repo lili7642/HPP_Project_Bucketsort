@@ -171,8 +171,8 @@ void dist_into_buckets(int *list, int N_list, int N_buckets, int **buckets, int*
 
 
 int main(int argc, char *argv[]){
-    if(argc != 5){
-        printf("Error: Excpected 4 arguments...\nUsage: %s N_list N_buckets N_threads Dist_type\n", argv[0]);
+    if(argc != 6){
+        printf("Error: Excpected 5 arguments...\nUsage: %s N_list N_buckets N_threads Dist_type print(1/0)\n", argv[0]);
         return -1;
     }
     if(strcmp(argv[4],"uniform") && strcmp(argv[4],"normal") && strcmp(argv[4],"exponential")){
@@ -184,6 +184,12 @@ int main(int argc, char *argv[]){
     int N_buckets = atoi(argv[2]);
     int N_threads = atoi(argv[3]);
     char *dist_type = argv[4];
+    int printflag = atoi(argv[5]);
+
+    if(printflag != 1 && printflag != 0){
+        printf("Error: Invalid print value. Allowed values: 1/0\n");
+        return -1;
+    }
 
     if(N_threads > 1){
         printf("openmp found, running parallel\n");
@@ -205,41 +211,62 @@ int main(int argc, char *argv[]){
 
     fill_list(list, N_list, dist_type);
     //print_list(list, N_list);
-    print_to_file("unsorted.txt", list, N_list);
+
+    if(printflag){
+        print_to_file("unsorted.txt", list, N_list);
+    }
 
     // begin timing algorithm
 
     double starttime, endtime, createtime, disttime, sorttime, putbacktime;
     starttime = omp_get_wtime();
 
+    //Find some values from list :
+
+    // find max and min:
+    int max_element = list[0];
+    int min_element = list[0];
+    for(int i = 1; i < N_list; i++){
+        if(list[i] > max_element) max_element = list[i];
+        else if(list[i] < min_element) min_element = list[i];
+    }
+    //printf("Biggest element: %d, smallest element: %d\n", max_element, min_element);
+
+    // calculate factor
+
+    int range = (max_element - min_element);
+    double temp = (double)N_buckets/(range+1);
+    //printf("Factor: %lf\n", temp);
+
     // CREATE BUCKETS -----------------------------------------------------------------------------------------------
-
-    /*
-    int **buckets = malloc(N_buckets*sizeof(*buckets)); //buckets is array of int pointer pointers
-    int *bucket_count = malloc(N_buckets*sizeof(*bucket_count)); //bucket_count keep tracks of how many elements are in each bucket
-    for(int i = 0; i < N_buckets; i++){
-        buckets[i] = malloc(N_list*sizeof(*list)); // memory to fit entire list allocated in each bucket
-
-        //initialise the arrays to avoid segmentation error
-        for (int j = 0; j < N_list; j++){
-            buckets[i][j] = 0;
-        }
-        bucket_count[i] = 0;
-    }*/
-
     int **buckets = malloc(N_buckets*sizeof(*buckets)); //buckets is array of int pointer pointers
     int *bucket_count = calloc(N_buckets, sizeof(*bucket_count)); //bucket_count keep tracks of how many elements are in each bucket
-    for(int i = 0; i < N_buckets; i++){
-        buckets[i] = malloc(N_list*sizeof(*list)); // memory to fit entire list allocated in each bucket
+
+    // calc bucket count first
+    for (int i = 0; i < N_list; i++){
+        int bucket_index = (int)((list[i]-min_element)*temp);
+        bucket_count[bucket_index]++;
     }
 
+
+    for(int i = 0; i < N_buckets; i++){
+        buckets[i] = malloc(bucket_count[i]*sizeof(*list)); // allocate only necessary memory!
+        //reset bucket count
+        bucket_count[i] = 0;
+    }
 
     createtime = omp_get_wtime();
     
 
     // SORT ELEMENTS INTO BUCKETS ---------------------------------------------------------------------------------
 
-    dist_into_buckets(list, N_list, N_buckets, buckets, bucket_count);
+    
+
+    for (int i = 0; i < N_list; i++){
+        int bucket_index = (int)((list[i]-min_element)*temp);
+        buckets[bucket_index][bucket_count[bucket_index]] = list[i];
+        bucket_count[bucket_index]++;
+    }
 
     disttime = omp_get_wtime();
     
@@ -310,7 +337,9 @@ int main(int argc, char *argv[]){
     int flag = is_sorted(list, N_list);
     if(flag){
         printf("The list is sorted!\n");
-        print_to_file("sorted.txt", list, N_list);
+        if(printflag){
+            print_to_file("sorted.txt", list, N_list);
+        }
     }else{
         printf("The list is not sorted...\n");
     }
