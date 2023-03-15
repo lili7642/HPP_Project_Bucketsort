@@ -57,11 +57,11 @@ void fill_list(int *list, int N, char *dist){
     // exponential dist
     else if(!(strcmp(dist, "exponential"))){
         printf("Exponential distribution\n");
-        double lambda = 0.002;
-        double u;
+        double lambda = 1/0.002; //precalculate division
+        double u; 
         for (int i = 0; i < N; i++){
             u = (double)rand()/RAND_MAX;
-            list[i] = -log(1-u)/lambda;
+            list[i] = -log(1-u)*lambda;
         }
         
 
@@ -214,6 +214,7 @@ int main(int argc, char *argv[]){
 
     // CREATE BUCKETS -----------------------------------------------------------------------------------------------
 
+    /*
     int **buckets = malloc(N_buckets*sizeof(*buckets)); //buckets is array of int pointer pointers
     int *bucket_count = malloc(N_buckets*sizeof(*bucket_count)); //bucket_count keep tracks of how many elements are in each bucket
     for(int i = 0; i < N_buckets; i++){
@@ -224,7 +225,14 @@ int main(int argc, char *argv[]){
             buckets[i][j] = 0;
         }
         bucket_count[i] = 0;
+    }*/
+
+    int **buckets = malloc(N_buckets*sizeof(*buckets)); //buckets is array of int pointer pointers
+    int *bucket_count = calloc(N_buckets, sizeof(*bucket_count)); //bucket_count keep tracks of how many elements are in each bucket
+    for(int i = 0; i < N_buckets; i++){
+        buckets[i] = malloc(N_list*sizeof(*list)); // memory to fit entire list allocated in each bucket
     }
+
 
     createtime = omp_get_wtime();
     
@@ -250,8 +258,8 @@ int main(int argc, char *argv[]){
 
     // some factor to decide wether to quicksort or insertion sort
     //int factor = (int)(N_list/N_buckets);
-    int factor = N_list; // seems like a good value
-    int quicksorted = 10;
+    int factor = 10; // seems like a good value
+    int quicksorted = 0;
 
 #pragma omp parallel for
     for (int i = 0; i < N_buckets; i++){
