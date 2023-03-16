@@ -146,30 +146,6 @@ void print_to_file(char *filename, int *list, int N){
     fclose(fp);
 }
 
-void dist_into_buckets(int *list, int N_list, int N_buckets, int **buckets, int* bucket_count){
-    // find max and min:
-    int max_element = list[0];
-    int min_element = list[0];
-    for(int i = 1; i < N_list; i++){
-        if(list[i] > max_element) max_element = list[i];
-        else if(list[i] < min_element) min_element = list[i];
-    }
-    //printf("Biggest element: %d, smallest element: %d\n", max_element, min_element);
-
-    // calculate factor
-
-    int range = (max_element - min_element);
-    double temp = (double)N_buckets/(range+1);
-    //printf("Factor: %lf\n", temp);
-
-    for (int i = 0; i < N_list; i++){
-        int bucket_index = (int)((list[i]-min_element)*temp);
-        buckets[bucket_index][bucket_count[bucket_index]] = list[i];
-        bucket_count[bucket_index]++;
-    }
-}
-
-
 int main(int argc, char *argv[]){
     if(argc != 6){
         printf("Error: Excpected 5 arguments...\nUsage: %s N_list N_buckets N_threads Dist_type print(1/0)\n", argv[0]);
@@ -196,6 +172,7 @@ int main(int argc, char *argv[]){
         omp_set_num_threads(N_threads);
     }else{
         printf("openmp not found, running serial\n");
+        omp_set_num_threads(1);
     }
 
     // CREATE LIST --------------------------------------------------------------------------------------------------
@@ -218,10 +195,10 @@ int main(int argc, char *argv[]){
 
     // begin timing algorithm
 
-    double starttime, endtime, createtime, disttime, sorttime, putbacktime;
+    double starttime, endtime, createtime, disttime, sorttime;
     starttime = omp_get_wtime();
 
-    //Find some values from list :
+    // SORTING STARTPOINT -------------------------------------------------------------------------------------------------
 
     // find max and min:
     int max_element = list[0];
@@ -230,13 +207,10 @@ int main(int argc, char *argv[]){
         if(list[i] > max_element) max_element = list[i];
         else if(list[i] < min_element) min_element = list[i];
     }
-    //printf("Biggest element: %d, smallest element: %d\n", max_element, min_element);
 
-    // calculate factor
-
+    // calculate variables for hash function
     int range = (max_element - min_element);
     double temp = (double)N_buckets/(range+1);
-    //printf("Factor: %lf\n", temp);
 
     // CREATE BUCKETS -----------------------------------------------------------------------------------------------
     int **buckets = malloc(N_buckets*sizeof(*buckets)); //buckets is array of int pointer pointers
@@ -244,69 +218,52 @@ int main(int argc, char *argv[]){
 
     // calc bucket count first
     for (int i = 0; i < N_list; i++){
-        int bucket_index = (int)((list[i]-min_element)*temp);
-        bucket_count[bucket_index]++;
+        int bucket_index = (int)((list[i]-min_element)*temp); // find bucket index using the hashing variable
+        bucket_count[bucket_index]++; // count how many elements are going in each bucket
     }
-
 
     for(int i = 0; i < N_buckets; i++){
         buckets[i] = malloc(bucket_count[i]*sizeof(*list)); // allocate only necessary memory!
-        //reset bucket count
-        bucket_count[i] = 0;
+        bucket_count[i] = 0; //reset bucket count
     }
 
     createtime = omp_get_wtime();
     
 
     // SORT ELEMENTS INTO BUCKETS ---------------------------------------------------------------------------------
-
-    
-
-    for (int i = 0; i < N_list; i++){
-        int bucket_index = (int)((list[i]-min_element)*temp);
-        buckets[bucket_index][bucket_count[bucket_index]] = list[i];
-        bucket_count[bucket_index]++;
+    for (int i = 0; i < N_list; i++){ // loop through buckets
+        int bucket_index = (int)((list[i]-min_element)*temp); // find bucket index using hash function variable
+        buckets[bucket_index][bucket_count[bucket_index]] = list[i]; // insert value in its correct bucket
+        bucket_count[bucket_index]++; // keep count on bucket elements, also servers as index for next element in this bucket
     }
 
-    disttime = omp_get_wtime();
-    
+    // can be done in parallel?
 
-    
-    // print out buckets to check work load balance
-    /*
-    for (int i = 0; i < N_buckets; i++)
-    {
-        printf("BUCKET #%d, Nr of elements: %d\n", i, bucket_count[i]);
-    }
-    */
-    
+    disttime = omp_get_wtime();   
 
     // SORT BUCKETS LOCALLY --------------------------------------------------------------------------------
 
     // some factor to decide wether to quicksort or insertion sort
-    //int factor = (int)(N_list/N_buckets);
     int factor = 10; // seems like a good value
-    int quicksorted = 0;
+    factor = 0;
+    //int quicksorted = 0; // keep count on how many buckets are being quicksorted for testing
 
-#pragma omp parallel for
+#pragma omp parallel for schedule(dynamic) // schedule dynamic makes sense
     for (int i = 0; i < N_buckets; i++){
 
         // choose local sorting method depending on bucket size
         if(bucket_count[i] >= factor){
-            quicksorted++;
-            quicksort(buckets[i], 0, bucket_count[i]-1);
+            //quicksorted++;
+            quicksort(buckets[i], 0, bucket_count[i]-1); // perform quicksort on bucket
         }
         else{
-            insertionsort(buckets[i], bucket_count[i]);
+            insertionsort(buckets[i], bucket_count[i]); // perform insertion sort on bucket
         }
     }
-    printf("Used quicksort for %d buckets\n", quicksorted);
+    //printf("Used quicksort for %d buckets\n", quicksorted);
 
     sorttime = omp_get_wtime();
     
-    
-
-
     // PUT ELEMENTS FROM BUCKET BACK INTO LIST IN ORDER --------------------------------------------------
     // this is parallelizable but need to remove list_index
 
@@ -316,19 +273,13 @@ int main(int argc, char *argv[]){
             list[list_index] = buckets[i][j];
             list_index++;
         }
-        
     }
-
-    putbacktime = omp_get_wtime();
     
-
     //end of sorting time
 
     endtime = omp_get_wtime();
 
-
-    printf("TIME: Total: %lf s, Bucket creation: %lf s, Bucket Dist: %lf s, Local sorting: %lf s, Put back: %lf s \n", endtime - starttime, createtime - starttime, disttime - createtime, sorttime - disttime, putbacktime - sorttime);
-
+    printf("TIME: Total: %lf s, Bucket creation: %lf s, Bucket Dist: %lf s, Local sorting: %lf s, Put back: %lf s \n", endtime - starttime, createtime - starttime, disttime - createtime, sorttime - disttime, endtime - sorttime);
 
     //printf("SORTED LIST:\n");
     //print_list(list, N_list);
@@ -343,8 +294,6 @@ int main(int argc, char *argv[]){
     }else{
         printf("The list is not sorted...\n");
     }
-    
-    
 
     // FREE EVERYTHING --------------------------------------------------------------------
     free(list);
@@ -354,7 +303,5 @@ int main(int argc, char *argv[]){
     }
     free(buckets);
 
-
-
-
+    printf("\n");
 }
