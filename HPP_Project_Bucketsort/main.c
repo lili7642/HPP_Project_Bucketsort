@@ -7,14 +7,16 @@
     #include <omp.h>
 #endif
 
-// swap the values of two pointers
+#define OPTI_BUCKET_DIST 1
+
+// swap the values of two pointers, used only for quicksorting as full implementation did not increase performance
 void swap(int* a, int* b){
     int temp = *a;
     *a = *b;
     *b = temp;
 }
 
-// Prints out the list to the N:th element.
+// Prints out the list to the N:th element, used for testing puroposes
 void print_list(int* list, int N){
     for (int i = 0; i < N; i++)
     {
@@ -57,7 +59,10 @@ void fill_list(int *list, int N, char *dist){
     // exponential dist
     else if(!(strcmp(dist, "exponential"))){
         printf("Exponential distribution\n");
-        double lambda = 1/0.002; //precalculate division
+
+        // Using inverse density function transform
+
+        double lambda = 1/0.002; //precalculate division, value chosen arbirtarily
         double u; 
         for (int i = 0; i < N; i++){
             u = (double)rand()/RAND_MAX;
@@ -88,7 +93,7 @@ void insertionsort( int *list, int N){
 
 // algorithm to chose a pivot index for quicksorting
 int pivot(int *list, int lower, int upper){
-    return(upper); 
+    return(upper); // last element will suffice as pivot element however it will suffer for exponential distribution
 }
 
 // swap all elements in a list over a pivot element
@@ -135,6 +140,7 @@ int is_sorted(int *list, int size){
     return flag;
 }
 
+// Function for printing out sorted and unsorted list to a txt file
 void print_to_file(char *filename, int *list, int N){
     FILE *fp;
     fp = fopen(filename, "w");
@@ -148,11 +154,11 @@ void print_to_file(char *filename, int *list, int N){
 
 int main(int argc, char *argv[]){
     if(argc != 6){
-        printf("Error: Excpected 5 arguments...\nUsage: %s N_list N_buckets N_threads Dist_type print(1/0)\n", argv[0]);
+        printf("Error: Excpected 5 arguments...\nUsage: %s N_list N_buckets N_threads Distribution(uniform/normal/exponential) print(1/0)\n", argv[0]);
         return -1;
     }
     if(strcmp(argv[4],"uniform") && strcmp(argv[4],"normal") && strcmp(argv[4],"exponential")){
-        printf("Error: allowed distribution are 'uniform', 'normal', 'exponential'");
+        printf("Error: allowed distribution are 'uniform', 'normal', 'exponential'\n");
         return -1;
     }
 
@@ -168,10 +174,10 @@ int main(int argc, char *argv[]){
     }
 
     if(N_threads > 1){
-        printf("openmp found, running parallel\n");
+        printf("Running in parallel on %d threads\n", N_threads);
         omp_set_num_threads(N_threads);
     }else{
-        printf("openmp not found, running serial\n");
+        printf("Running in serial on 1 thread\n");
         omp_set_num_threads(1);
     }
 
@@ -194,7 +200,6 @@ int main(int argc, char *argv[]){
     }
 
     // begin timing algorithm
-
     double starttime, endtime, createtime, disttime, sorttime;
     starttime = omp_get_wtime();
 
@@ -203,41 +208,47 @@ int main(int argc, char *argv[]){
     // find max and min:
     int max_element = list[0];
     int min_element = list[0];
+#pragma omp parallel for reduction(max:max_element) reduction(min:min_element)
     for(int i = 1; i < N_list; i++){
         if(list[i] > max_element) max_element = list[i];
         else if(list[i] < min_element) min_element = list[i];
     }
-
     // calculate variables for hash function
     int range = (max_element - min_element);
     double temp = (double)N_buckets/(range+1);
 
     // CREATE BUCKETS -----------------------------------------------------------------------------------------------
+
     int **buckets = malloc(N_buckets*sizeof(*buckets)); //buckets is array of int pointer pointers
     int *bucket_count = calloc(N_buckets, sizeof(*bucket_count)); //bucket_count keep tracks of how many elements are in each bucket
 
-    // calc bucket count first
+    int *list_element_bucket_count = malloc(N_list * sizeof(*list));
+    
+    // calc bucket count first, needs to be in serial probably. 
+    // This loop is responsible for 75% of time consumption
+    int bucket_index;
     for (int i = 0; i < N_list; i++){
-        int bucket_index = (int)((list[i]-min_element)*temp); // find bucket index using the hashing variable
+        bucket_index = (int)((list[i]-min_element)*temp); // find bucket index using the hashing variable
+        list_element_bucket_count[i] = bucket_count[bucket_index];
         bucket_count[bucket_index]++; // count how many elements are going in each bucket
     }
 
     for(int i = 0; i < N_buckets; i++){
         buckets[i] = malloc(bucket_count[i]*sizeof(*list)); // allocate only necessary memory!
-        bucket_count[i] = 0; //reset bucket count
     }
 
     createtime = omp_get_wtime();
     
-
     // SORT ELEMENTS INTO BUCKETS ---------------------------------------------------------------------------------
-    for (int i = 0; i < N_list; i++){ // loop through buckets
-        int bucket_index = (int)((list[i]-min_element)*temp); // find bucket index using hash function variable
-        buckets[bucket_index][bucket_count[bucket_index]] = list[i]; // insert value in its correct bucket
-        bucket_count[bucket_index]++; // keep count on bucket elements, also servers as index for next element in this bucket
-    }
 
-    // can be done in parallel?
+    #pragma omp parallel for
+    for (int i = 0; i < N_list; i++){ // loop through buckets
+        bucket_index = (int)((list[i]-min_element)*temp);
+        buckets[bucket_index][list_element_bucket_count[i]] = list[i]; // insert value in its correct bucket
+    }
+    //this is no longer needed
+    free(list_element_bucket_count);
+
 
     disttime = omp_get_wtime();   
 
@@ -246,34 +257,37 @@ int main(int argc, char *argv[]){
     // some factor to decide wether to quicksort or insertion sort
     int factor = 10; // seems like a good value
     factor = 0;
-    //int quicksorted = 0; // keep count on how many buckets are being quicksorted for testing
 
 #pragma omp parallel for schedule(dynamic) // schedule dynamic makes sense
     for (int i = 0; i < N_buckets; i++){
 
         // choose local sorting method depending on bucket size
         if(bucket_count[i] >= factor){
-            //quicksorted++;
             quicksort(buckets[i], 0, bucket_count[i]-1); // perform quicksort on bucket
         }
         else{
             insertionsort(buckets[i], bucket_count[i]); // perform insertion sort on bucket
         }
     }
-    //printf("Used quicksort for %d buckets\n", quicksorted);
 
     sorttime = omp_get_wtime();
     
     // PUT ELEMENTS FROM BUCKET BACK INTO LIST IN ORDER --------------------------------------------------
-    // this is parallelizable but need to remove list_index
+    
+    int *bucket_accum = malloc((N_buckets)*sizeof(*bucket_accum)); // cumulative list
 
-    int list_index = 0;
-    for (int i = 0; i < N_buckets; i++){
-        for (int j = 0; j < bucket_count[i]; j++){
-            list[list_index] = buckets[i][j];
-            list_index++;
+    // Calculate accumulative sum
+    bucket_accum[0] = 0;
+    for(int i = 1; i<N_buckets; i++){
+        bucket_accum[i] = bucket_count[i-1] + bucket_accum[i-1]; //bucket_accum begins with 0 and is 1 element behind bucket_count
+    }                                                            //essentially counting how many elements there are before each bucket
+    #pragma omp parallel for
+    for(int i = 0; i < N_buckets; i++){
+        for(int j = 0; j < bucket_count[i]; j++){
+            list[bucket_accum[i] + j] = buckets[i][j]; //find correct list index using cumulative sum
         }
     }
+    
     
     //end of sorting time
 
@@ -302,6 +316,7 @@ int main(int argc, char *argv[]){
         free(buckets[i]);
     }
     free(buckets);
+    free(bucket_accum);
 
     printf("\n");
 }
