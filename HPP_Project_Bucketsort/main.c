@@ -7,8 +7,6 @@
     #include <omp.h>
 #endif
 
-#define OPTI_BUCKET_DIST 1
-
 // swap the values of two pointers, used only for quicksorting as full implementation did not increase performance
 void swap(int* a, int* b){
     int temp = *a;
